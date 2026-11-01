@@ -1,6 +1,8 @@
 import { asc, eq } from "drizzle-orm";
+import { env } from "cloudflare:workers";
 import { getDb } from "../../../db";
 import { products } from "../../../db/schema";
+import { authorizeAdminRequest } from "../../../lib/admin-auth";
 
 const catalog = [
   { slug: "halo-desk-lamp", name: "Halo Desk Lamp", category: "Desk", description: "A dimmable pool of warm light, balanced on a slender powder-coated frame.", price: 89, compareAtPrice: 109, color: "#d9e7dc", accent: "#f26b4b", stock: 18, featured: true },
@@ -29,6 +31,8 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const denied = await authorizeAdminRequest(request, env);
+  if (denied) return denied;
   try {
     const body = await request.json() as typeof catalog[number];
     if (!body.name || !body.slug || !body.category || body.price < 0) return Response.json({ error: "Invalid product data." }, { status: 400 });
@@ -38,6 +42,8 @@ export async function POST(request: Request) {
 }
 
 export async function PUT(request: Request) {
+  const denied = await authorizeAdminRequest(request, env);
+  if (denied) return denied;
   try {
     const body = await request.json() as Partial<typeof catalog[number]> & { id?: number };
     if (!body.id) return Response.json({ error: "Product ID is required." }, { status: 400 });
@@ -48,6 +54,8 @@ export async function PUT(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  const denied = await authorizeAdminRequest(request, env);
+  if (denied) return denied;
   const id = Number(new URL(request.url).searchParams.get("id"));
   if (!Number.isInteger(id)) return Response.json({ error: "Product ID is required." }, { status: 400 });
   const [product] = await getDb().delete(products).where(eq(products.id, id)).returning();

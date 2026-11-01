@@ -64,7 +64,8 @@ See the [complete feature screenshot index](screenshots/task-4-commerce/README.m
 | App routing | Vinext with a Next-compatible App Router |
 | Runtime | Cloudflare Workers |
 | Persistence | Cloudflare D1 and Drizzle ORM |
-| Identity | Trusted ChatGPT Sites identity headers for hosted order history |
+| Admin access | Runtime-only password and HMAC-signed secure session cookie |
+| Order history | Hosting-provided identity headers; demo fallback locally |
 
 ## Run locally
 
@@ -94,13 +95,21 @@ See the [complete feature screenshot index](screenshots/task-4-commerce/README.m
    npm run dev
    ```
 
-The storefront initializes its sample catalog on first load. The development runtime uses local Cloudflare tooling; its generated state stays in the ignored `.wrangler/` directory. The private `.openai/hosting.json` file is deliberately not tracked.
+Before starting, add these values to the ignored `.dev.vars` file in the repository root, replacing both placeholders with unique secrets:
+
+   ```dotenv
+   ADMIN_PASSWORD="<unique password, at least 16 characters>"
+   ADMIN_SESSION_SECRET="<random secret, at least 32 bytes>"
+   ```
+
+Generate a signing secret with `openssl rand -base64 48`. Never commit `.dev.vars` or expose these values to browser code. The storefront initializes its sample catalog on first load. The development runtime uses local Cloudflare tooling; its generated state stays in the ignored `.wrangler/` directory. The private `.openai/hosting.json` file is deliberately not tracked.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
     Browser["Storefront<br/>React + TypeScript"] -->|fetch| Products["/api/products"]
+    Admin["Admin sign-in"] -->|secure cookie| Products
     Browser -->|fetch| Orders["/api/orders"]
     Browser <-->|localStorage| Cart["Persistent cart"]
     Products --> DB["Cloudflare D1<br/>Drizzle ORM"]
@@ -113,17 +122,22 @@ flowchart LR
 | Route | Methods | Purpose |
 | --- | --- | --- |
 | `/api/products` | `GET` | Initialize the sample catalog when empty and return products |
-| `/api/products` | `POST`, `PUT`, `DELETE` | Create, update, and delete catalog products |
+| `/api/products` | `POST`, `PUT`, `DELETE` | Create, update, and delete catalog products; requires a signed-in admin session |
+| `/api/admin/session` | `GET`, `POST`, `DELETE` | Check, create, and clear the admin session |
 | `/api/orders` | `POST` | Validate a demo checkout, save the order and line items, and update stock |
 | `/api/orders` | `GET` | Return order history for the current host-provided identity |
+
+Visit `/admin` to sign in. The password and session-signing key are read only from the Worker runtime environment (`ADMIN_PASSWORD` and `ADMIN_SESSION_SECRET`); there is no default password or public registration. Admin sessions are HMAC-signed, expire after eight hours, and use an `HttpOnly`, `Secure`, `SameSite=Strict`, host-only cookie. Catalog mutations additionally require a same-origin `Origin` header. Missing or weak secrets disable admin access rather than opening it.
+
+For a Wrangler deployment, provision both values as Worker secrets (for example, `npx wrangler secret put ADMIN_PASSWORD` and `npx wrangler secret put ADMIN_SESSION_SECRET`). For other hosting control planes, configure them as runtime secrets on the Worker; do not put them in committed config or browser-exposed variables. Configure an edge rate limit for `POST /api/admin/session`, enforce HTTPS redirects, and enable HSTS before public deployment. The session cookie is always marked `Secure`.
 
 ## Scope and limitations
 
 - **No payments:** Checkout is a demonstration flow. It stores an order, but never collects card details or processes a payment.
 - **Demo data:** The catalog and screenshots use fictional products and sample delivery details.
-- **Hosting identity:** There is no sign-up or sign-in UI. Hosted order history depends on trusted identity headers; the local fallback identity is only for development.
-- **Not production-ready:** Product write endpoints do not implement an admin authorization layer. Add authorization and review deployment configuration before exposing write APIs to untrusted users.
-- **Hosting setup:** A production Cloudflare D1 binding and host-specific configuration must be supplied by the deployment environment.
+- **Demo records only:** Checkout remains public and intentionally stores demonstration orders while decrementing sample inventory. Do not collect real customer records until customer authentication, order-ownership enforcement, and privacy controls are implemented and verified.
+- **Hosting identity:** Order-history separation still depends on the hosting platform stripping client-supplied identity headers and injecting trusted values. The local fallback identity is shared and is not authentication; do not use it to store or expose real order records.
+- **Deployment gate:** Admin writes fail closed without both runtime secrets, but this does not make the demo storefront production-ready. Configure strong secrets, rate limiting, HTTPS/HSTS, D1 access, and trusted identity handling in the target hosting environment before exposing it to real users.
 
 ## Project
 
